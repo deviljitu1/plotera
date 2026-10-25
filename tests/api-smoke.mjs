@@ -1,0 +1,42 @@
+import assert from "node:assert/strict";
+import {writeFile,mkdir} from "node:fs/promises";
+import {seedProject} from "../lib/domain.ts";
+const base=process.env.TEST_BASE_URL||"http://127.0.0.1:5173";
+const signin=await fetch(`${base}/signin-with-chatgpt?return_to=/`,{redirect:"manual"});
+const cookie=signin.headers.getSetCookie().map(x=>x.split(";")[0]).join("; ");
+assert.ok(cookie,"local sign-in cookie");
+const results=[];
+async function request(path,method="GET",body,authenticated=true,extra={}){
+  const r=await fetch(base+path,{method,headers:{...(authenticated?{cookie}:{}),...(body?{"content-type":"application/json"}:{}),...extra},body:body?JSON.stringify(body):undefined});
+  const text=await r.text();let data;try{data=JSON.parse(text);}catch{data={error:text};}return{r,data};
+}
+function check(label,condition){assert.ok(condition,label);results.push(label);}
+let q=await request("/api/projects","GET",undefined,false);check("anonymous workspace requests rejected",q.r.status===401);
+q=await request("/api/projects","GET",undefined,false,{"oai-authenticated-user-id":"spoofed"});check("untrusted identity headers stripped in local preview",q.r.status===401);
+q=await request("/api/projects","POST",{},true,{origin:"https://other.example"});check("cross-origin writes rejected",q.r.status===403);
+const d=seedProject();d.name="QA · disposable integration fixture";d.contactPhone="919000000000";
+let p=(await request("/api/projects","POST",{data:d})).data;assert.ok(p.id);const id=p.id;
+await mkdir("research",{recursive:true});await writeFile("research/test-project-id.txt",id);
+check("project created with durable server record",p.version===1);
+q=await request(`/api/projects/${id}`,"PATCH",{data:{...d,name:"QA · saved draft"},version:1});p=q.data;check("project saved with incremented version",p.version===2);
+q=await request(`/api/projects/${id}`,"PATCH",{data:d,version:1});check("stale draft cannot overwrite newer design",q.r.status===409);
+q=await request(`/api/projects/${id}`,"PATCH",{data:{...p.data,mapKey:"another-project/private-map.png"},version:p.version});check("cross-project asset references rejected",q.r.status===400);
+const form=new FormData();form.append("file",new File([Uint8Array.from(Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jX1sAAAAASUVORK5CYII=","base64"))],"map.png",{type:"image/png"}));
+const upload=await fetch(`${base}/api/projects/${id}/upload`,{method:"POST",headers:{cookie},body:form});const asset=await upload.json();check("reference image stored locally",upload.status===201&&asset.key.startsWith(id+"/"));
+const file=await fetch(`${base}/api/files/${asset.key}`,{headers:{cookie}});check("owner can open stored image",file.status===200&&file.headers.get("content-type")==="image/png");
+const privateFile=await fetch(`${base}/api/files/${asset.key}`);check("anonymous access to private files rejected",privateFile.status===401);
+q=await request(`/api/projects/${id}`,"PATCH",{data:{...p.data,mapKey:asset.key},version:p.version});p=q.data;
+q=await request(`/api/projects/${id}/publish`,"POST",{});const token=q.data.shareToken;check("brochure publishes with an unguessable share token",token?.length>=32);
+q=await request(`/api/brochure/${token}`,"GET",undefined,false);check("shared read exposes only published project data",q.r.status===200&&!q.data.owner&&q.data.data.name==="QA · saved draft");
+q=await request(`/api/projects/${id}`,"PATCH",{data:{...p.data,name:"QA · unpublished edit"},version:p.version});p=q.data;
+q=await request(`/api/brochure/${token}`,"GET",undefined,false);check("draft changes do not leak into published brochure",q.data.data.name==="QA · saved draft");
+q=await request(`/api/brochure/${token}/event`,"POST",{type:"whatsapp",plot:d.plots[0].id},false);check("WhatsApp click event can be recorded without contact data",q.r.status===200);
+q=await request(`/api/projects/${id}/stats`);check("recorded WhatsApp interest appears in analytics",q.data.events.some(e=>e.type==="whatsapp"));
+q=await request("/mcp","POST",{jsonrpc:"2.0",id:1,method:"tools/list",params:{}});check("MCP exposes map inspection and edit tools",q.data.result.tools.some(t=>t.name==="get_reference_map")&&q.data.result.tools.some(t=>t.name==="save_site_plan"));
+q=await request("/mcp","POST",{jsonrpc:"2.0",id:2,method:"tools/call",params:{name:"get_reference_map",arguments:{project_id:id}}});check("Codex can inspect the uploaded reference image",q.data.result.content.some(c=>c.type==="image"));
+q=await request("/mcp","POST",{jsonrpc:"2.0",id:3,method:"tools/call",params:{name:"update_plot",arguments:{project_id:id,version:1,plot_id:d.plots[0].id,status:"sold"}}});check("MCP rejects stale editing versions",q.data.result.isError===true);
+q=await request(`/api/projects/${id}/billing`,"PATCH",{invoiceStatus:"invoiced",invoiceAmount:5000});check("manual invoice record updates without a payment gateway",q.r.status===200&&q.data.invoiceStatus==="invoiced");
+q=await request(`/api/projects/${id}/unpublish`,"POST",{});assert.equal(q.r.status,200);
+q=await request(`/api/brochure/${token}`,"GET",undefined,false);check("unpublishing revokes brochure access",q.r.status===404);
+await writeFile("research/api-verification.json",JSON.stringify({passed:results.length,checks:results,fixture:id},null,2));
+console.log(`PASS: ${results.length} integration checks. Disposable fixture: ${id}`);

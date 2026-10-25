@@ -1,0 +1,1 @@
+(function(){var d=document.documentElement;d.classList.remove('no-js');try{if(localStorage.getItem('theme')==='dusk')d.classList.add('dusk')}catch(e){}if(!window.matchMedia('(prefers-reduced-motion: reduce)').matches){d.classList.add('motion');setTimeout(function(){if(!window.gsap)d.classList.remove('motion')},2500)}})();
