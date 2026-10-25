@@ -6,7 +6,7 @@ export function normalizeSiteUrl(value:string|undefined){
     return url.origin;
   }catch{return undefined;}
 }
-export const siteUrl=normalizeSiteUrl(process.env.SITE_URL);
+export const siteUrl=process.env.VERCEL_ENV&&process.env.VERCEL_ENV!=="production"?undefined:normalizeSiteUrl(process.env.SITE_URL||(process.env.VERCEL_PROJECT_PRODUCTION_URL?`https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`:undefined));
 export const homeTitle="Plotera | Interactive 3D Plot Brochures & Site Plans";
 export const homeDescription="Turn your approved layout into an interactive 2D and 3D plot brochure. Manage availability and connect buyers on WhatsApp. For builders and property brokers.";
 export function homeSchema(origin=siteUrl){

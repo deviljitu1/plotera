@@ -12,13 +12,15 @@ async function handle(request: Request, context: {params:Promise<{path:string[]}
       if(method==="POST" && path[2]==="event") { const b=await request.json() as Body; await svc.recordEvent(path[1],b.type,b.plot); return Response.json({ok:true}); }
     }
     if(path[0]==="files" && method==="GET") return await svc.readFile(request,path.slice(1).join("/"));
-    const owner=svc.identity(request);
-    if(path[0]==="workspace" && method==="GET") return Response.json({name:request.headers.get("oai-authenticated-user-email")||"My workspace",backend:provider()});
+    const owner=await svc.identity(request);
+    if(path[0]==="workspace" && method==="GET") return Response.json({name:"My workspace",backend:provider()});
     if(path[0]==="projects") {
       const id=path[1];
       if(!id && method==="GET") return Response.json(await svc.listProjects(owner));
       if(!id && method==="POST") { const b=await request.json() as Body; return Response.json(await svc.createProject(owner,b.data),{status:201}); }
       if(id) {
+        if(path[2]==="upload-intent" && method==="POST") return Response.json(await svc.uploadIntent(request,owner,id));
+        if(path[2]==="complete-upload" && method==="POST") return Response.json(await svc.completeUpload(request,owner,id),{status:201});
         if(path[2]==="publish" && method==="POST") return Response.json(await svc.publishProject(id,owner));
         if(path[2]==="unpublish" && method==="POST") { await svc.unpublish(id,owner); return Response.json({ok:true}); }
         if(path[2]==="stats" && method==="GET") return Response.json(await svc.stats(id,owner));

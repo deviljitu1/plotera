@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 const tools = [
   {name:"list_projects",description:"List the signed-in user's plot developments.",inputSchema:{type:"object",properties:{}}},
   {name:"get_project",description:"Get the full editable site plan and its version.",inputSchema:{type:"object",properties:{project_id:{type:"string"}},required:["project_id"]}},
-  {name:"get_reference_map",description:"Read the project's uploaded map as an image to trace its exact boundaries. The editor fits the image centred into a 1000×760 coordinate canvas. Calibrate the scale before deriving areas. Maximum image 10 MB.",inputSchema:{type:"object",properties:{project_id:{type:"string"}},required:["project_id"]}},
+  {name:"get_reference_map",description:"Read the project's uploaded map as an image to trace its exact boundaries. The editor fits the image centred into a 1000×760 coordinate canvas. Calibrate the scale before deriving areas. Maximum image 3 MB.",inputSchema:{type:"object",properties:{project_id:{type:"string"}},required:["project_id"]}},
   {name:"create_project",description:"Create a blank plot development. Coordinates are map units; scale is metres per unit.",inputSchema:{type:"object",properties:{name:{type:"string"},location:{type:"string"}},required:["name"]}},
   {name:"generate_layout",description:"Replace a project's design with a regular grid of plots, entrance road, avenue and amenities. Destructive to the existing draft layout; call get_project and confirm the user's intent first.",inputSchema:{type:"object",properties:{project_id:{type:"string"},version:{type:"integer"},rows:{type:"integer",minimum:1,maximum:20},columns:{type:"integer",minimum:2,maximum:10}},required:["project_id","version","rows","columns"]}},
   {name:"save_site_plan",description:"Save a complete site plan with arbitrary plot polygons, roads, amenities and scale. Read get_project first and pass its version. Preserves account ownership and publication separately.",inputSchema:{type:"object",properties:{project_id:{type:"string"},version:{type:"integer"},data:{type:"object",description:"Complete ProjectData from get_project with the intended changes"}},required:["project_id","version","data"]}},
@@ -18,12 +18,13 @@ const tools = [
 export async function POST(request:Request) {
   let id:unknown=null;
   try {
+    svc.sameOrigin(request);
     const rpc=await request.json() as Rpc; id=rpc.id;
     const result=(value:unknown)=>Response.json({jsonrpc:"2.0",id,result:value});
     if(rpc.method==="server/discover") return result({supportedVersions:["2026-07-28"],capabilities:{tools:{}}});
     if(rpc.method==="initialize") return result({protocolVersion:"2025-03-26",capabilities:{tools:{}},serverInfo:{name:"Plotera Studio",version:"1.0.0"}});
     if(rpc.method?.startsWith("notifications/")) return new Response(null,{status:202});
-    const owner=svc.identity(request);
+    const owner=await svc.identity(request);
     if(rpc.method==="tools/list") return result({tools});
     if(rpc.method!=="tools/call") return Response.json({jsonrpc:"2.0",id,error:{code:-32601,message:"Method not found"}});
     const {name,arguments:a}=rpc.params;
@@ -36,7 +37,7 @@ export async function POST(request:Request) {
       else if(name==="get_reference_map") {
         if(!d.mapKey||!d.mapKey.startsWith(p.id+"/"))throw new Error("Upload the project's reference map first.");
         const image=await bucket().get(d.mapKey);
-        if(!image||image.size>10*1024*1024)throw new Error("Map must be an image smaller than 10 MB for agent inspection.");
+        if(!image||image.size>3*1024*1024)throw new Error("Map must be an image smaller than 3 MB for agent inspection.");
         const bytes=new Uint8Array(await image.arrayBuffer());let binary="";for(let i=0;i<bytes.length;i+=32768)binary+=String.fromCharCode(...bytes.subarray(i,i+32768));
         return result({content:[{type:"text",text:JSON.stringify({canvas:{width:1000,height:760,fit:"contain",align:"center"},metersPerUnit:d.metersPerUnit,version:p.version})},{type:"image",data:btoa(binary),mimeType:image.httpMetadata?.contentType||"image/png"}]});
       }

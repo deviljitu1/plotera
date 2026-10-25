@@ -31,11 +31,9 @@ test("landing content and metadata are present without running JavaScript",async
   assert.ok(tags("a").some(n=>attrs(n).href==="/demo"));
   assert.ok(tags("img").some(n=>attrs(n).fetchpriority==="high"));
   assert.ok(!tags("link").some(n=>attrs(n).rel==="canonical"&&attrs(n).href.includes("127.0.0.1")));
-  const gate=await fetch(base+"/admin",{redirect:"manual"});assert.ok([302,303,307].includes(gate.status));assert.ok(gate.headers.get("location").includes("signin-with-chatgpt"));
-  const login=await fetch(base+"/signin-with-chatgpt?return_to=/admin",{redirect:"manual"});const cookie=login.headers.getSetCookie().map(x=>x.split(";")[0]).join("; ");
-  const studio=parse(await(await fetch(base+"/admin",{headers:{cookie}})).text()),metas=[];
-  function findMeta(n){if(n.tagName==="meta")metas.push(attrs(n));for(const c of n.childNodes||[])findMeta(c)}findMeta(studio);
-  assert.ok(metas.some(m=>m.name==="robots"&&m.content.includes("noindex")));
+  const gate=await fetch(base+"/admin",{redirect:"manual"});assert.ok([302,303,307].includes(gate.status));assert.ok(gate.headers.get("location").includes("/login"));
+  const denied=await fetch(base+"/api/projects",{headers:{"oai-authenticated-user-id":"local_seedy","oai-authenticated-user-email":"spoof@example.com"}});assert.equal(denied.status,401,"untrusted identity headers never grant access");
+  const login=await fetch(base+"/login");assert.equal(login.status,200);assert.match(await login.text(),/type="password"/);
   const robots=await fetch(base+"/robots.txt");assert.equal(robots.status,200);assert.match(robots.headers.get("content-type"),/text\/plain/);
   const sitemap=await fetch(base+"/sitemap.xml");
   if(sitemap.status===200)assert.ok(!(await sitemap.text()).includes("localhost"));

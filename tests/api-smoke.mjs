@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import {writeFile,mkdir} from "node:fs/promises";
 import {seedProject} from "../lib/domain.ts";
 const base=process.env.TEST_BASE_URL||"http://127.0.0.1:5173";
-const signin=await fetch(`${base}/signin-with-chatgpt?return_to=/`,{redirect:"manual"});
-const cookie=signin.headers.getSetCookie().map(x=>x.split(";")[0]).join("; ");
-assert.ok(cookie,"local sign-in cookie");
+const accessToken=process.env.PLOTERA_TEST_ACCESS_TOKEN;
+assert.ok(accessToken,"Set PLOTERA_TEST_ACCESS_TOKEN to an allowlisted Supabase user session token; no test login bypass exists.");
+const cookie=`plotera-access=${accessToken}`;
 const results=[];
 async function request(path,method="GET",body,authenticated=true,extra={}){
   const r=await fetch(base+path,{method,headers:{...(authenticated?{cookie}:{}),...(body?{"content-type":"application/json"}:{}),...extra},body:body?JSON.stringify(body):undefined});

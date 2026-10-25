@@ -49,6 +49,9 @@
     ".sites-runtime",
     "outputs",
     "work",
-    "components"
+    "components",
+    "vite.config.ts",
+    "worker",
+    "db/index.ts"
   ]
 }

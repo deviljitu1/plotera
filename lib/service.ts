@@ -2,10 +2,9 @@ import * as store from "./store";
 import { seedProject, validateProject, type ProjectData } from "./domain";
 
 export class HttpError extends Error { constructor(public status: number, message: string) { super(message); } }
-export function identity(request: Request) {
-  const id = request.headers.get("oai-authenticated-user-id");
-  if (!id) throw new HttpError(401, "Sign in to open your workspace.");
-  return id;
+export async function identity(request: Request) {
+  const {requestUser}=await import("./auth");const user=await requestUser(request);
+  if(!user)throw new HttpError(401,"Sign in to open your workspace.");return user.id;
 }
 export function sameOrigin(request: Request) {
   const origin = request.headers.get("origin");
@@ -76,13 +75,32 @@ export async function upload(request: Request, owner: string, id: string) {
   await log(id,owner,`Uploaded ${file.name.slice(0,100)}`);
   return {key,name:file.name,type};
 }
+const assetFormats:Record<string,string>={"image/png":"png","image/jpeg":"jpg","image/webp":"webp","application/pdf":"pdf","model/gltf-binary":"glb","audio/mpeg":"mp3"};
+export async function uploadIntent(request:Request,owner:string,id:string){
+  await owned(id,owner);
+  const b=await request.json() as {name:string;type:string;size:number};
+  if(typeof b.name!=="string"||b.name.length>200||!Number.isInteger(b.size)||b.size<1||b.size>25*1024*1024)throw new HttpError(400,"Choose a file smaller than 25 MB.");
+  const type=b.name.toLowerCase().endsWith(".glb")?"model/gltf-binary":b.type;
+  if(!assetFormats[type])throw new HttpError(400,"Supported files: PNG, JPG, WebP, PDF, GLB and MP3.");
+  const key=`${id}/${crypto.randomUUID()}.${assetFormats[type]}`;
+  return {key,type,url:await store.bucket().signedUpload(key)};
+}
+export async function completeUpload(request:Request,owner:string,id:string){
+  await owned(id,owner);
+  const b=await request.json() as {key:string;name:string;type:string};
+  if(typeof b.key!=="string"||!b.key.startsWith(id+"/")||!new RegExp(`^[a-f0-9-]{36}\\.${assetFormats[b.type]||"invalid"}$`).test(b.key.slice(id.length+1))||typeof b.name!=="string"||b.name.length>200)throw new HttpError(400,"Invalid project asset.");
+  const object=await store.bucket().inspect(b.key),bytes=object.bytes;
+  const head=String.fromCharCode(...bytes.slice(0,4));
+  const valid=b.type==="model/gltf-binary"?head==="glTF":b.type==="application/pdf"?head==="%PDF":b.type==="image/png"?bytes[0]===137&&head.slice(1)==="PNG":b.type==="image/jpeg"?bytes[0]===255&&bytes[1]===216:b.type==="image/webp"?head==="RIFF"&&String.fromCharCode(...bytes.slice(8,12))==="WEBP":b.type==="audio/mpeg";
+  if(!object.size||object.size>25*1024*1024||object.type!==b.type||!valid)throw new HttpError(400,"File contents do not match the selected format.");
+  await log(id,owner,`Uploaded ${b.name.slice(0,100)}`);
+  return {key:b.key,name:b.name,type:b.type};
+}
 export async function readFile(request: Request, key: string) {
   const url = new URL(request.url), token = url.searchParams.get("share"), project = key.split("/")[0];
   if (token) { const p = await publicProject(token); const d=p.data; if(p.id!==project||![d.mapKey,d.modelKey,d.audioKey,...d.documents.map(x=>x.key)].includes(key)) throw new HttpError(404,"File not found."); }
-  else await owned(project,identity(request));
-  const object = await store.bucket().get(key);
-  if (!object) throw new HttpError(404,"File not found.");
-  return new Response(object.body,{headers:{"Content-Type":object.httpMetadata?.contentType||"application/octet-stream","X-Content-Type-Options":"nosniff","Content-Disposition":object.httpMetadata?.contentType==="application/pdf"?'inline; filename="project-document.pdf"':"inline","Cache-Control":"private, max-age=120"}});
+  else await owned(project,await identity(request));
+  return new Response(null,{status:307,headers:{Location:await store.bucket().signedDownload(key),"Cache-Control":"private, no-store"}});
 }
 export async function unpublish(id:string,owner:string){await owned(id,owner);await store.update(id,owner,{published:null});await log(id,owner,"Unpublished brochure");}
 export async function billing(id:string,owner:string,invoiceStatus:string,invoiceAmount:number){await owned(id,owner);if(!["unbilled","invoiced","paid"].includes(invoiceStatus)||!Number.isFinite(invoiceAmount)||invoiceAmount<0||invoiceAmount>10000000)throw new HttpError(400,"Invalid invoice details.");const p=await store.update(id,owner,{invoiceStatus,invoiceAmount});await log(id,owner,`Manual invoice marked ${invoiceStatus}`);return present(p!);}
